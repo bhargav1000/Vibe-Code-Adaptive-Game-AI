@@ -13,27 +13,26 @@ class PlayScene extends Phaser.Scene {
     preload() {
         // Load all assets with the correct, visually confirmed 128x128 frame size.
         this.load.image('boss_arena', 'map_assets/boss_arena.png');
-        this.load.spritesheet('idle', 'Idle.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('walk', 'Walk.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('run', 'Run.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('melee', 'Melee.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('rolling', 'Rolling.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('take-damage', 'TakeDamage.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('kick', 'Kick.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('melee2', 'Melee2.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('special1', 'Special1.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('die', 'Die.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('unsheath', 'UnSheathSword.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('shield-block-start', 'ShieldBlockStart.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('shield-block-mid', 'ShieldBlockMid.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.spritesheet('front-flip', 'FrontFlip.png', { frameWidth: 128, frameHeight: 128 });
-        this.load.image('healthbar', 'healthbar.png');
+        this.load.spritesheet('idle', 'character_assets/Idle.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('walk', 'character_assets/Walk.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('run', 'character_assets/Run.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('melee', 'character_assets/Melee.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('rolling', 'character_assets/Rolling.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('take-damage', 'character_assets/TakeDamage.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('kick', 'character_assets/Kick.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('melee2', 'character_assets/Melee2.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('special1', 'character_assets/Special1.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('die', 'character_assets/Die.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('unsheath', 'character_assets/UnSheathSword.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('shield-block-start', 'character_assets/ShieldBlockStart.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('shield-block-mid', 'character_assets/ShieldBlockMid.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.spritesheet('front-flip', 'character_assets/FrontFlip.png', { frameWidth: 128, frameHeight: 128 });
+        this.load.image('healthbar', 'character_assets/healthbar.png');
     }
 
     create() {
         // --- Map ---
         const map = this.add.image(0, 0, 'boss_arena').setOrigin(0);
-        this.physics.world.setBounds(0, 0, map.width, map.height);
 
         // --- Input & Properties ---
         this.keys = this.input.keyboard.createCursorKeys();
@@ -168,17 +167,21 @@ class PlayScene extends Phaser.Scene {
         });
 
         // --- Hero with Physics ---
-        this.hero = this.physics.add.sprite(map.width / 2, map.height / 2, 'idle', 0);
-        this.hero.name = 'hero';
-        this.hero.body.setCircle(28);
-        this.hero.body.setOffset(36, 36);
-        this.hero.body.pushable = false;
+        this.hero = this.matter.add.sprite(map.width/2, map.height/2, 'idle', 0);
+        this.hero.setCircle(28);
+        this.hero.setFixedRotation();   // no spin
+        this.hero.setIgnoreGravity(true).setFrictionAir(0);
+        this.hero.body.slop = 0.5;   // tighter separation test
+        this.hero.body.inertia = Infinity; // prevent any rotation
+        this.hero.label = 'hero';
         this.hero.takeDamage = this.takeDamage.bind(this);
 
         this.hero.on('animationstart', (animation) => {
             const isAttacking = ['melee-', 'kick-', 'melee2-', 'special1-'].some(prefix => animation.key.startsWith(prefix));
             if (isAttacking) {
                 this.knightReact();
+                // Spawn slash sensor for attacks
+                this.spawnSlashSensor(this.hero);
             }
         });
 
@@ -198,12 +201,14 @@ class PlayScene extends Phaser.Scene {
         }, this);
 
         // --- Purple Knight ---
-        this.purpleKnight = this.physics.add.sprite(map.width / 2, map.height / 4, 'idle', 0);
-        this.purpleKnight.name = 'knight';
-        this.purpleKnight.body.setSize(72, 72, true);
-        this.purpleKnight.body.setOffset(29, 40);
-        this.purpleKnight.setTint(0x9400D3); // A nice purple
-        this.purpleKnight.body.pushable = false;
+        this.purpleKnight = this.matter.add.sprite(map.width/2, map.height/4, 'idle', 0);
+        this.purpleKnight.setCircle(28);
+        this.purpleKnight.setTint(0x9400D3);
+        this.purpleKnight.setFixedRotation();
+        this.purpleKnight.setIgnoreGravity(true).setFrictionAir(0);
+        this.purpleKnight.body.slop = 0.5;   // tighter separation test
+        this.purpleKnight.body.inertia = Infinity; // prevent any rotation
+        this.purpleKnight.label = 'knight';
         this.purpleKnight.isBlocking = false;
         this.purpleKnight.shieldValue = 15;
         this.purpleKnight.facing = 's';
@@ -212,13 +217,6 @@ class PlayScene extends Phaser.Scene {
         this.purpleKnight.maxHealth = 50;
         this.purpleKnight.health = this.purpleKnight.maxHealth;
         this.purpleKnight.attackCooldown = 0;
-
-        // --- Purple Knight's Physical Body (Green Box) ---
-        this.knightCollider = this.physics.add.sprite(this.purpleKnight.x, this.purpleKnight.y, null).setVisible(false);
-        this.knightCollider.body.setCircle(28);
-        this.knightCollider.body.setOffset(-12, 2);
-        this.knightCollider.body.pushable = false;
-        this.knightCollider.body.immovable = true;
 
         this.purpleKnight.on('animationcomplete', (animation) => {
             if (animation.key.startsWith('take-damage-')) {
@@ -236,39 +234,40 @@ class PlayScene extends Phaser.Scene {
         }, this);
 
         // --- Collisions ---
-        const rects = [
-            { x: 135, y: 165, w: 1268, h: 5, label: 'arena_top' },
-            { x: 105, y: 818, w: 1265, h: 5, label: 'arena_bottom' },
-            { x: 135, y: 165, w: 5, h: 728, label: 'arena_left' },
-            { x: 1368, y: 165, w: 5, h: 728, label: 'arena_right' }
+        const WALL = 40;                          // 40 px thickness
+        const walls = [
+            this.matter.add.rectangle(135+1268/2, 165-WALL/2, 1268, WALL, { isStatic:true }),  // top
+            this.matter.add.rectangle(105+1265/2, 818+WALL/2, 1265, WALL, { isStatic:true }),  // bottom
+            this.matter.add.rectangle(135-WALL/2, 165+728/2, WALL, 728, { isStatic:true }),    // left
+            this.matter.add.rectangle(1368+WALL/2, 165+728/2, WALL, 728, { isStatic:true })   // right
         ];
-        if (this.obstacles) this.obstacles.destroy();
-        this.obstacles = this.physics.add.staticGroup();
-        rects.forEach(r => {
-            const o = this.obstacles.create(r.x + r.w / 2, r.y + r.h / 2, null);
-            o.setVisible(false);
-            o.body.setSize(r.w, r.h);
-            o.label = r.label;
+        this.obstacles = walls;
+
+        // Set up collision detection for attacks
+        this.matter.world.on('collisionstart', (ev) => {
+            ev.pairs.forEach(p => {
+                const { bodyA, bodyB } = p;
+                if(bodyA.label==='slash' && bodyB.label==='knight' && bodyA.owner!==bodyB){
+                    this.dealDamage(bodyB, 10);
+                }
+                if(bodyB.label==='slash' && bodyA.label==='hero' && bodyB.owner!==bodyA){
+                    this.dealDamage(bodyA, 10);
+                }
+            });
         });
-        this.physics.add.collider(this.hero, this.obstacles);
-        this.physics.add.collider(this.purpleKnight, this.obstacles);
-        this.physics.add.collider(this.hero, this.knightCollider);
-        this.physics.add.overlap(this.hero, this.purpleKnight, this.handlePlayerAttackOnKnight, (hero, knight) => {
-            if (knight.isDead) return false;
-            const currentAnimKey = hero.anims.currentAnim ? hero.anims.currentAnim.key : '';
-            const isAttacking = ['melee-', 'kick-', 'melee2-', 'special1-'].some(prefix => currentAnimKey.startsWith(prefix));
-            const canKnightTakeDamage = !knight.isTakingDamage;
-            return isAttacking && canKnightTakeDamage;
-        }, this);
         // F2 debug
         if (!this._f2) {
             this._f2 = true;
             this.input.keyboard.on('keydown-F2', () => {
-                this.obstacles.children.iterate(o => {
+                this.obstacles.forEach(o => {
                     if (!o.debugG) {
+                        const bounds = o.bounds;
                         o.debugG = this.add.graphics().lineStyle(1, 0xff0000)
-                            .strokeRect(o.body.x, o.body.y, o.body.width, o.body.height);
-                    } else { o.debugG.destroy(); o.debugG = null; }
+                            .strokeRect(bounds.min.x, bounds.min.y, bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y);
+                    } else { 
+                        o.debugG.destroy(); 
+                        o.debugG = null; 
+                    }
                 });
             });
         }
@@ -276,14 +275,19 @@ class PlayScene extends Phaser.Scene {
         // --- Debug Red Boundaries (X) ---
         const redBoundaries = this.add.graphics().setDepth(100).setVisible(false);
         redBoundaries.lineStyle(2, 0xff0000, 0.8);
-        rects.forEach(r => {
+        const boundaryRects = [
+            { x: 135, y: 165, w: 1268, h: 5 },  // top
+            { x: 105, y: 818, w: 1265, h: 5 },  // bottom  
+            { x: 135, y: 165, w: 5, h: 728 },   // left
+            { x: 1368, y: 165, w: 5, h: 728 }   // right
+        ];
+        boundaryRects.forEach(r => {
             redBoundaries.strokeRect(r.x, r.y, r.w, r.h);
         });
-        redBoundaries.strokeRect(this.purpleKnight.body.x, this.purpleKnight.body.y, this.purpleKnight.body.width, this.purpleKnight.body.height);
-        
-        const heroDebugBoxX = this.hero.x - (this.hero.width / 2) + 29;
-        const heroDebugBoxY = this.hero.y - (this.hero.height / 2) + 40;
-        redBoundaries.strokeRect(heroDebugBoxX, heroDebugBoxY, 72, 72);
+        // Draw knight collision circle
+        redBoundaries.strokeCircle(this.purpleKnight.x, this.purpleKnight.y, 28);
+        // Draw hero collision circle  
+        redBoundaries.strokeCircle(this.hero.x, this.hero.y, 28);
 
 
         if (!this._xHookInitialized) {
@@ -296,7 +300,7 @@ class PlayScene extends Phaser.Scene {
                 this.greenBoundaries.setVisible(!this.greenBoundaries.visible);
             });
             this.redBoundaries = redBoundaries; // Store for update loop
-            this.boundaryRects = rects; // Store for update loop
+            this.boundaryRects = boundaryRects; // Store for update loop
 
             // --- Purple Knight Health Bar ---
             const barX = this.game.config.width / 2;
@@ -369,6 +373,11 @@ class PlayScene extends Phaser.Scene {
         this.cameras.main.startFollow(this.hero);
         this.cameras.main.setBounds(0, 0, map.width, map.height);
         this.cameras.main.roundPixels = true;
+
+        // --- Matter Debug View ---
+        this.matter.world.createDebugGraphic();
+        this.matter.world.drawDebug = true;
+        this.matter.world.debugGraphic.setVisible(true);
     }
 
     knightReact() {
@@ -454,13 +463,11 @@ class PlayScene extends Phaser.Scene {
 
         if (victim === this.purpleKnight && knockbackDistance > 0) {
             const knockbackAngle = Phaser.Math.Angle.Between(attacker.x, attacker.y, victim.x, victim.y);
-            const knockbackVelocity = new Phaser.Math.Vector2(Math.cos(knockbackAngle), Math.sin(knockbackAngle)).scale(knockbackDistance * 10);
-            victim.body.setVelocity(knockbackVelocity.x, knockbackVelocity.y);
-            this.knightCollider.body.setVelocity(knockbackVelocity.x, knockbackVelocity.y);
+            const knockbackVelocity = new Phaser.Math.Vector2(Math.cos(knockbackAngle), Math.sin(knockbackAngle)).scale(knockbackDistance * 0.5); // Matter physics scaling
+            victim.setVelocity(knockbackVelocity.x, knockbackVelocity.y);
             this.time.delayedCall(150, () => {
                 if (victim.active && !victim.isDead) {
-                    victim.body.setVelocity(0, 0);
-                    this.knightCollider.body.setVelocity(0, 0);
+                    victim.setVelocity(0, 0);
                 }
             });
         }
@@ -485,10 +492,9 @@ class PlayScene extends Phaser.Scene {
         if (victim.health <= 0 && !victim.isDead) {
             this.isDeathSequenceActive = true;
             victim.isDead = true;
-            victim.body.setVelocity(0, 0);
+            victim.setVelocity(0, 0);
 
             if (victim === this.purpleKnight) {
-                this.knightCollider.body.setVelocity(0, 0);
                 const direction = this.getDirectionFromAngle(Phaser.Math.Angle.Between(this.hero.x, this.hero.y, victim.x, victim.y));
                 this.hero.anims.playReverse(`unsheath-${direction}`);
                 // After animations, show win screen and restart
@@ -512,10 +518,9 @@ class PlayScene extends Phaser.Scene {
 
             victim.anims.play('die', true);
             victim.once('animationcomplete-die', () => {
-                victim.disableBody(true, false); // Keep sprite visible, disable physics
-                if (victim === this.purpleKnight) {
-                    this.knightCollider.disableBody(true, true);
-                }
+                // Disable physics body for Matter
+                this.matter.world.remove(victim.body);  
+                victim.body = null;
             });
         }
     }
@@ -589,6 +594,89 @@ class PlayScene extends Phaser.Scene {
         return direction;
     }
 
+    spawnSlashSensor = (atk) => {
+        const r = 28;          // reach
+        // Get angle from facing direction instead of sprite rotation
+        const direction = atk === this.hero ? this.facing : atk.facing;
+        const angle = this.getAngleFromDirection(direction);
+        
+        // create a sensor circle offset slightly forward
+        const sensor = this.matter.add.circle(atk.x + Math.cos(angle)*r,
+                                              atk.y + Math.sin(angle)*r,
+                                              r,
+                                              { isSensor:true, label:'slash' });
+        sensor.owner = atk;
+
+        this.time.delayedCall(120, ()=> this.matter.world.remove(sensor)); // ~2 frames
+    };
+
+    dealDamage = (body, damage) => {
+        const gameObject = body.gameObject;
+        if (!gameObject || gameObject.isDead || gameObject.isTakingDamage) return;
+
+        gameObject.health -= damage;
+        gameObject.isTakingDamage = true;
+        
+        if (gameObject === this.hero) {
+            this.updateHealthBar();
+        } else if (gameObject === this.purpleKnight) {
+            this.updateKnightHealthBar();
+        }
+
+        // Visual feedback
+        gameObject.setTint(0xff0000);
+        this.time.delayedCall(200, () => {
+            if (gameObject === this.purpleKnight) {
+                gameObject.setTint(0x9400D3);
+            } else {
+                gameObject.clearTint();
+            }
+        });
+
+        // Death check
+        if (gameObject.health <= 0 && !gameObject.isDead) {
+            this.handleDeath(gameObject);
+        } else {
+            this.time.delayedCall(500, () => { 
+                gameObject.isTakingDamage = false; 
+            });
+        }
+    };
+
+    handleDeath = (victim) => {
+        this.isDeathSequenceActive = true;
+        victim.isDead = true;
+        victim.setVelocity(0, 0);
+
+        if (victim === this.purpleKnight) {
+            const direction = this.getDirectionFromAngle(Phaser.Math.Angle.Between(this.hero.x, this.hero.y, victim.x, victim.y));
+            this.hero.anims.playReverse(`unsheath-${direction}`);
+            this.time.delayedCall(1000, () => {
+                this.showGameOverScreen(true);
+                this.time.delayedCall(2000, () => this.scene.restart());
+            });
+            this.knightHealthBarBg.setVisible(false);
+            this.knightHealthBar.setVisible(false);
+            this.knightNameText.setVisible(false);
+        } else { // victim is hero
+            const victor = this.purpleKnight;
+            const direction = this.getDirectionFromAngle(Phaser.Math.Angle.Between(victor.x, victor.y, victim.x, victim.y));
+            victor.anims.play(`idle-${direction}`, true);
+            this.healthBarBg.setVisible(false);
+            this.healthBar.setVisible(false);
+            this.time.delayedCall(1500, () => {
+                this.showGameOverScreen(false);
+            });
+        }
+
+        victim.anims.play('die', true);
+        victim.once('animationcomplete-die', () => {
+            this.matter.world.remove(victim.body);  
+            victim.body = null;
+        });
+    };
+
+
     update(time, delta) {
         if (this.gameOverActive) {
             if (Phaser.Input.Keyboard.JustDown(this.keys.q)) {
@@ -598,7 +686,7 @@ class PlayScene extends Phaser.Scene {
         }
 
         if (this.isDeathSequenceActive) {
-            this.hero.body.setVelocity(0, 0);
+            this.hero.setVelocity(0, 0);
             return;
         }
 
@@ -608,7 +696,7 @@ class PlayScene extends Phaser.Scene {
             if (knight.isDead) {
                 return;
             }
-            this.knightCollider.setPosition(knight.x, knight.y);
+            
             const knightAnim = knight.anims.currentAnim;
             const isKnightInAction = (knightAnim && (knightAnim.key.startsWith('take-damage-') || knightAnim.key.startsWith('shield-block-'))) || knight.isTakingDamage;
 
@@ -617,9 +705,24 @@ class PlayScene extends Phaser.Scene {
                 const direction = this.getDirectionFromAngle(angle);
                 knight.facing = direction;
 
-                knight.body.setVelocity(0, 0);
-                this.knightCollider.body.setVelocity(0, 0);
-                knight.anims.play(`idle-${direction}`, true);
+                // Calculate distance to player
+                const distanceToPlayer = Phaser.Math.Distance.Between(knight.x, knight.y, this.hero.x, this.hero.y);
+                
+                // Move towards player if far enough away
+                if (distanceToPlayer > 80) {
+                    const knightSpeed = 2; // Matter physics uses different force scale
+                    const moveVector = new Phaser.Math.Vector2(
+                        Math.cos(angle) * knightSpeed,
+                        Math.sin(angle) * knightSpeed
+                    );
+                    
+                    knight.setVelocity(moveVector.x, moveVector.y);
+                    knight.anims.play(`walk-${direction}`, true);
+                } else {
+                    // Stop and idle when close to player
+                    knight.setVelocity(0, 0);
+                    knight.anims.play(`idle-${direction}`, true);
+                }
             }
         }
 
@@ -630,18 +733,17 @@ class PlayScene extends Phaser.Scene {
             this.boundaryRects.forEach(r => {
                 this.redBoundaries.strokeRect(r.x, r.y, r.w, r.h);
             });
-            this.redBoundaries.strokeRect(this.purpleKnight.body.x, this.purpleKnight.body.y, this.purpleKnight.body.width, this.purpleKnight.body.height);
-            
-            const heroDebugBoxX = this.hero.x - (this.hero.width / 2) + 29;
-            const heroDebugBoxY = this.hero.y - (this.hero.height / 2) + 30;
-            this.redBoundaries.strokeRect(heroDebugBoxX, heroDebugBoxY, 72, 72);
+            // Draw knight collision circle
+            this.redBoundaries.strokeCircle(this.purpleKnight.x, this.purpleKnight.y, 28);
+            // Draw hero collision circle  
+            this.redBoundaries.strokeCircle(this.hero.x, this.hero.y, 28);
         }
         if (this.blueBoundaries && this.blueBoundaries.visible) {
             this.blueBoundaries.clear();
             this.blueBoundaries.lineStyle(2, 0x0000ff, 0.8);
-            const heroCenterX = this.hero.body.x + this.hero.body.radius;
-            const heroCenterY = this.hero.body.y + this.hero.body.radius;
-            const heroRadius = this.hero.body.radius;
+            const heroCenterX = this.hero.x;
+            const heroCenterY = this.hero.y;
+            const heroRadius = 28;
             this.blueBoundaries.strokeCircle(heroCenterX, heroCenterY, heroRadius);
             for (let i = 0; i < 8; i++) {
                 const angle = i * 45;
@@ -657,9 +759,9 @@ class PlayScene extends Phaser.Scene {
         if (this.greenBoundaries && this.greenBoundaries.visible) {
             this.greenBoundaries.clear();
             this.greenBoundaries.lineStyle(2, 0x00ff00, 0.8);
-            const knightCenterX = this.knightCollider.body.x + this.knightCollider.body.radius;
-            const knightCenterY = this.knightCollider.body.y + this.knightCollider.body.radius;
-            const knightRadius = this.knightCollider.body.radius;
+            const knightCenterX = this.purpleKnight.x;
+            const knightCenterY = this.purpleKnight.y;
+            const knightRadius = 28;
             this.greenBoundaries.strokeCircle(knightCenterX, knightCenterY, knightRadius);
             for (let i = 0; i < 8; i++) {
                 const angle = i * 45;
@@ -681,7 +783,7 @@ class PlayScene extends Phaser.Scene {
         const isActionInProgress = currentAnim && (currentAnim.key.startsWith('melee-') || currentAnim.key.startsWith('rolling-') || currentAnim.key.startsWith('kick-') || currentAnim.key.startsWith('melee2-') || currentAnim.key.startsWith('special1-') || currentAnim.key.startsWith('front-flip-')) && this.hero.anims.isPlaying;
 
         if (isBlocking) {
-            this.hero.body.setVelocity(0, 0);
+            this.hero.setVelocity(0, 0);
             if (b.isUp) {
                 this.hero.anims.play(`idle-${this.facing}`, true);
             }
@@ -701,11 +803,11 @@ class PlayScene extends Phaser.Scene {
                     case 'sw': moveVelocity.set(-1, 1); break;
                     case 'se': moveVelocity.set(1, 1); break;
                 }
-                const speed = currentAnim.key.startsWith('rolling-') ? this.rollSpeed : this.frontFlipSpeed;
+                const speed = currentAnim.key.startsWith('rolling-') ? 8 : 6; // Matter physics scaling
                 moveVelocity.normalize().scale(speed);
-                this.hero.body.setVelocity(moveVelocity.x, moveVelocity.y);
+                this.hero.setVelocity(moveVelocity.x, moveVelocity.y);
             } else {
-                this.hero.body.setVelocity(0, 0);
+                this.hero.setVelocity(0, 0);
             }
             return;
         }
@@ -716,7 +818,7 @@ class PlayScene extends Phaser.Scene {
         }
 
         if (Phaser.Input.Keyboard.JustDown(b)) {
-            this.hero.body.setVelocity(0, 0);
+            this.hero.setVelocity(0, 0);
             this.hero.anims.play(`shield-block-start-${this.facing}`, true);
             return;
         }
@@ -774,7 +876,7 @@ class PlayScene extends Phaser.Scene {
         if (velocity.length() > 0) {
             this.facing = direction;
 
-            const currentSpeed = space.isDown ? this.runSpeed : this.walkSpeed;
+            const currentSpeed = space.isDown ? 5 : 3; // Matter physics scaling
             velocity.normalize().scale(currentSpeed);
 
             const animPrefix = space.isDown ? 'run' : 'walk';
@@ -783,7 +885,11 @@ class PlayScene extends Phaser.Scene {
             this.hero.anims.play(`idle-${this.facing}`, true);
         }
 
-        this.hero.body.setVelocity(velocity.x, velocity.y);
+        this.hero.setVelocity(velocity.x, velocity.y);
+        
+        // Ensure no visual rotation
+        this.hero.setRotation(0);
+        this.purpleKnight.setRotation(0);
     }
 }
 
@@ -793,11 +899,13 @@ const config = {
     height: 720,
     backgroundColor: '#000000',
     pixelArt: true,
-    roundPixels: true,
     physics: {
-        default: 'arcade',
-        arcade: {
-            gravity: { y: 0 }
+        default: 'matter',
+        matter: {
+            gravity: { y: 0 },
+            enableSleep: false,       // keep bodies active
+            positionIterations: 6,    // CCD robustness
+            velocityIterations: 6
         }
     },
     scene: [PlayScene]
