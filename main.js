@@ -176,14 +176,26 @@ class PlayScene extends Phaser.Scene {
         this.hero.label = 'hero';
         this.hero.takeDamage = this.takeDamage.bind(this);
 
-        this.hero.on('animationstart', (animation) => {
-            const isAttacking = ['melee-', 'kick-', 'melee2-', 'special1-'].some(prefix => animation.key.startsWith(prefix));
-            if (isAttacking) {
-                this.knightReact();
-                // Spawn slash sensor for attacks
-                this.spawnSlashSensor(this.hero);
-            }
-        });
+        // Initialize attack state
+        this.hero.isAttacking = false;
+        this.hero.currentAttackType = null;
+        this.hero.isRecovering = false;
+        
+        // Initialize armor attributes
+        this.hero.armor = { 
+            helmet: 0.10,      // 10% damage reduction for head hits
+            breastplate: 0.30, // 30% damage reduction for torso hits  
+            greaves: 0.15,     // 15% damage reduction for limb hits
+            shieldFront: 0.50  // 50% damage reduction when blocking
+        };
+        
+        // Initialize armor durability
+        this.hero.armorDur = {
+            helmet: 20,        // 20 durability points
+            breastplate: 30,   // 30 durability points
+            greaves: 15,       // 15 durability points
+            shieldFront: 25    // 25 durability points
+        };
 
         this.hero.on('animationcomplete', (animation) => {
             if (animation.key.startsWith('shield-block-start-')) {
@@ -217,6 +229,25 @@ class PlayScene extends Phaser.Scene {
         this.purpleKnight.maxHealth = 50;
         this.purpleKnight.health = this.purpleKnight.maxHealth;
         this.purpleKnight.attackCooldown = 0;
+        this.purpleKnight.isAttacking = false;
+        this.purpleKnight.currentAttackType = null;
+        this.purpleKnight.isRecovering = false;
+        
+        // Initialize armor attributes
+        this.purpleKnight.armor = { 
+            helmet: 0.15,      // 15% damage reduction for head hits (heavier armor)
+            breastplate: 0.40, // 40% damage reduction for torso hits (heavier armor)
+            greaves: 0.20,     // 20% damage reduction for limb hits (heavier armor)
+            shieldFront: 0.60  // 60% damage reduction when blocking (better shield)
+        };
+        
+        // Initialize armor durability (heavier armor has more durability)
+        this.purpleKnight.armorDur = {
+            helmet: 30,        // 30 durability points
+            breastplate: 40,   // 40 durability points
+            greaves: 25,       // 25 durability points
+            shieldFront: 35    // 35 durability points
+        };
 
         this.purpleKnight.on('animationcomplete', (animation) => {
             if (animation.key.startsWith('take-damage-')) {
@@ -247,6 +278,16 @@ class PlayScene extends Phaser.Scene {
         this.matter.world.on('collisionstart', (ev) => {
             ev.pairs.forEach(p => {
                 const { bodyA, bodyB } = p;
+                
+                // Check for active hit sensors (100ms window)
+                if (bodyA.label === 'hit-sensor' && bodyA.isActive) {
+                    this.checkSensorOverlap(bodyA, bodyB);
+                }
+                if (bodyB.label === 'hit-sensor' && bodyB.isActive) {
+                    this.checkSensorOverlap(bodyB, bodyA);
+                }
+                
+                // Legacy slash sensor support (if any remain)
                 if(bodyA.label==='slash' && bodyB.label==='knight' && bodyA.owner!==bodyB){
                     this.dealDamage(bodyB, 10);
                 }
@@ -374,10 +415,10 @@ class PlayScene extends Phaser.Scene {
         this.cameras.main.setBounds(0, 0, map.width, map.height);
         this.cameras.main.roundPixels = true;
 
-        // --- Matter Debug View ---
-        this.matter.world.createDebugGraphic();
-        this.matter.world.drawDebug = true;
-        this.matter.world.debugGraphic.setVisible(true);
+        // --- Matter Debug View (disabled) ---
+        // this.matter.world.createDebugGraphic();
+        // this.matter.world.drawDebug = true;
+        // this.matter.world.debugGraphic.setVisible(true);
     }
 
     knightReact() {
@@ -594,6 +635,7 @@ class PlayScene extends Phaser.Scene {
         return direction;
     }
 
+
     spawnSlashSensor = (atk) => {
         const r = 28;          // reach
         // Get angle from facing direction instead of sprite rotation
@@ -608,6 +650,414 @@ class PlayScene extends Phaser.Scene {
         sensor.owner = atk;
 
         this.time.delayedCall(120, ()=> this.matter.world.remove(sensor)); // ~2 frames
+    };
+
+    performAttack = (attacker, attackType) => {
+        // Prevent attacks during recovery or existing attack
+        if (attacker.isAttacking || attacker.isRecovering) return;
+        
+        attacker.isAttacking = true;
+        attacker.currentAttackType = attackType;
+        
+        // Get direction for the attacker
+        const direction = attacker === this.hero ? this.facing : attacker.facing;
+        
+        // Play attack animation and immediately pause on frame 0 for wind-up
+        attacker.anims.play(`${attackType}-${direction}`, true);
+        attacker.anims.pause(); // Freeze on first frame
+        
+        // Delay before blade glow flash (50ms before impact)
+        this.time.delayedCall(50, () => this.triggerBladeGlow(attacker), [], this);
+        
+        // Delay before continuing animation and spawning hit sensor (100ms wind-up)
+        this.time.delayedCall(100, () => this.continueAttack(attacker), [], this);
+    };
+
+    triggerBladeGlow = (attacker) => {
+        if (!attacker.isAttacking) return; // Attack was cancelled
+        
+        // Apply bright yellow/white tint for blade glow effect
+        attacker.setTint(0xFFFF99); // Bright yellow-white color
+        
+        // Remove tint after 50ms
+        this.time.delayedCall(50, () => {
+            if (attacker.active) {
+                // Restore original tint
+                if (attacker === this.purpleKnight) {
+                    attacker.setTint(0x9400D3); // Purple knight's original color
+                } else {
+                    attacker.clearTint(); // Hero's original color
+                }
+            }
+        });
+    };
+
+    continueAttack = (attacker) => {
+        if (!attacker.isAttacking) return; // Attack was cancelled
+        
+        // Resume the paused animation to continue from frame 1
+        attacker.anims.resume();
+        
+        // Spawn active frame sensor with controlled hit window
+        this.spawnActiveFrameSensor(attacker);
+        
+        // Emit sword arc particles at the moment of sensor spawn
+        this.createSwordArcParticles(attacker);
+        
+        // Nudge camera opposite to swing direction for impact effect
+        this.nudgeCamera(attacker);
+        
+        // Trigger knight reaction if hero is attacking
+        if (attacker === this.hero) {
+            this.knightReact();
+        }
+        
+        // Reset attack state when animation completes
+        attacker.once('animationcomplete', (animation) => {
+            // Only handle attack animations
+            if (animation.key.includes(attacker.currentAttackType)) {
+                attacker.isAttacking = false;
+                attacker.currentAttackType = null;
+                attacker.attackCooldown = 0;
+                
+                // Return to idle if not recovering
+                if (!attacker.isRecovering) {
+                    const direction = attacker === this.hero ? this.facing : attacker.facing;
+                    attacker.anims.play(`idle-${direction}`, true);
+                }
+            }
+        });
+    };
+
+    createSwordArcParticles = (attacker) => {
+        const direction = attacker === this.hero ? this.facing : attacker.facing;
+        const angle = this.getAngleFromDirection(direction);
+        
+        // Create 3-5 spark particles along the blade arc
+        const numParticles = Phaser.Math.Between(3, 5);
+        
+        for (let i = 0; i < numParticles; i++) {
+            // Position particles along an arc in front of the attacker
+            const arcProgress = i / (numParticles - 1); // 0 to 1
+            const arcRadius = 20 + (arcProgress * 15); // 20 to 35 pixels from attacker
+            const arcAngle = angle + (arcProgress - 0.5) * 0.8; // Small arc spread
+            
+            const particleX = attacker.x + Math.cos(arcAngle) * arcRadius;
+            const particleY = attacker.y + Math.sin(arcAngle) * arcRadius;
+            
+            // Create spark particle using graphics
+            const spark = this.add.graphics();
+            spark.fillStyle(0xFFFFAA); // Bright yellow spark
+            spark.fillCircle(0, 0, 2); // Small 2px radius spark
+            spark.setPosition(particleX, particleY);
+            spark.setDepth(50); // Above characters but below UI
+            
+            // Add particle movement and fade out
+            const velocityX = Math.cos(arcAngle) * 30 + (Math.random() - 0.5) * 20;
+            const velocityY = Math.sin(arcAngle) * 30 + (Math.random() - 0.5) * 20;
+            
+            // Animate particle
+            this.tweens.add({
+                targets: spark,
+                x: particleX + velocityX,
+                y: particleY + velocityY,
+                alpha: 0,
+                scaleX: 0.3,
+                scaleY: 0.3,
+                duration: 200,
+                ease: 'Power2',
+                onComplete: () => {
+                    spark.destroy();
+                }
+            });
+        }
+    };
+
+    nudgeCamera = (attacker) => {
+        const direction = attacker === this.hero ? this.facing : attacker.facing;
+        const angle = this.getAngleFromDirection(direction);
+        
+        // Calculate nudge direction (opposite to swing direction)
+        const nudgeAngle = angle + Math.PI; // 180 degrees opposite
+        const nudgeStrength = Phaser.Math.Between(2, 3); // 2-3 pixel nudge
+        
+        // Calculate nudge offset
+        const nudgeX = Math.cos(nudgeAngle) * nudgeStrength;
+        const nudgeY = Math.sin(nudgeAngle) * nudgeStrength;
+        
+        // Store original camera position
+        const originalX = this.cameras.main.scrollX;
+        const originalY = this.cameras.main.scrollY;
+        
+        // Apply camera nudge
+        this.cameras.main.setScroll(originalX + nudgeX, originalY + nudgeY);
+        
+        // Return camera to original position after one frame (~16ms)
+        this.time.delayedCall(16, () => {
+            this.cameras.main.setScroll(originalX, originalY);
+        });
+    };
+
+    spawnActiveFrameSensor = (attacker) => {
+        const r = 28; // reach
+        const direction = attacker === this.hero ? this.facing : attacker.facing;
+        const angle = this.getAngleFromDirection(direction);
+        
+        // Create hit sensor at sword's reach
+        const sensor = this.matter.add.circle(
+            attacker.x + Math.cos(angle) * r,
+            attacker.y + Math.sin(angle) * r,
+            r,
+            { isSensor: true, label: 'hit-sensor' }
+        );
+        sensor.owner = attacker;
+        sensor.isActive = true;
+        
+        // Store reference for collision checking
+        this.activeSensors = this.activeSensors || [];
+        this.activeSensors.push(sensor);
+        
+        // Remove sensor after 100ms (active frame window)
+        this.time.delayedCall(100, () => {
+            if (this.matter.world && sensor.body && sensor.isActive) {
+                this.matter.world.remove(sensor);
+                sensor.isActive = false;
+                
+                // If sensor expired without hitting, still enter recovery
+                if (!sensor.hasHit) {
+                    attacker.isRecovering = true;
+                    this.time.delayedCall(150, () => {
+                        attacker.isRecovering = false;
+                        
+                        // Return to idle after recovery if not already in an action
+                        if (!attacker.isAttacking) {
+                            const direction = attacker === this.hero ? this.facing : attacker.facing;
+                            attacker.anims.play(`idle-${direction}`, true);
+                        }
+                    });
+                }
+            }
+            // Remove from active sensors list
+            const index = this.activeSensors.indexOf(sensor);
+            if (index > -1) {
+                this.activeSensors.splice(index, 1);
+            }
+        });
+    };
+
+    checkSensorOverlap = (sensor, target) => {
+        // Only process during active frame window
+        if (!sensor.isActive || !sensor.owner) return;
+        
+        // Determine if target is valid for damage
+        const attacker = sensor.owner;
+        let isValidTarget = false;
+        const baseDamage = 10;
+        
+        if (attacker === this.hero && target.label === 'knight') {
+            isValidTarget = true;
+        } else if (attacker === this.purpleKnight && target.label === 'hero') {
+            isValidTarget = true;
+        }
+        
+        // Process hit on first valid overlap
+        if (isValidTarget && target.gameObject) {
+            // Mark sensor as having hit something
+            sensor.hasHit = true;
+            
+            // Get hit coordinates (sensor position represents the hit point)
+            const hitX = sensor.position.x;
+            const hitY = sensor.position.y;
+            
+            // Calculate final damage with modifiers including hit location
+            const armorMod = this.getArmorModifier(target.gameObject, hitX, hitY, baseDamage);
+            const critMod = this.getCritModifier(attacker, target.gameObject);
+            let dmg = baseDamage * armorMod * critMod;
+            
+            // Apply directional blocking bonus
+            dmg = this.applyDirectionalBlocking(target.gameObject, attacker, dmg);
+            
+            // Apply damage and effects
+            this.applyDamage(target.gameObject, dmg);
+            this.applyKnockback(target.gameObject, attacker);
+            this.playHitReaction(target.gameObject);
+            
+            // Start recovery period for attacker
+            attacker.isRecovering = true;
+            this.time.delayedCall(150, () => {
+                attacker.isRecovering = false;
+                
+                // Return to idle after recovery if not already in an action
+                if (!attacker.isAttacking) {
+                    const direction = attacker === this.hero ? this.facing : attacker.facing;
+                    attacker.anims.play(`idle-${direction}`, true);
+                }
+            });
+            
+            // Remove sensor immediately to prevent multi-hits
+            this.matter.world.remove(sensor);
+            sensor.isActive = false;
+            
+            // Remove from active sensors list
+            const index = this.activeSensors?.indexOf(sensor);
+            if (index > -1) {
+                this.activeSensors.splice(index, 1);
+            }
+        }
+    };
+
+    getArmorModifier = (target, hitX, hitY, damage) => {
+        // Determine armor slot based on blocking status and hit zone
+        let armorSlot = 'breastplate'; // default to torso
+        
+        if (target.isBlocking) {
+            // When blocking, use shield armor
+            armorSlot = 'shieldFront';
+        } else if (hitX !== undefined && hitY !== undefined) {
+            // Calculate hit zone based on distance from target center
+            const targetRadius = 28;
+            const d = Phaser.Math.Distance.Between(hitX, hitY, target.x, target.y);
+            
+            if (d < targetRadius * 0.3) {
+                // Head zone
+                armorSlot = 'helmet';
+            } else if (d < targetRadius * 0.7) {
+                // Torso zone  
+                armorSlot = 'breastplate';
+            } else {
+                // Limbs zone
+                armorSlot = 'greaves';
+            }
+        }
+        
+        // Apply armor durability damage
+        if (target.armorDur && target.armorDur[armorSlot] > 0) {
+            target.armorDur[armorSlot] -= damage;
+            if (target.armorDur[armorSlot] <= 0) {
+                target.armor[armorSlot] /= 2;  // Halve protection when broken
+                target.armorDur[armorSlot] = 0; // Mark as broken
+            }
+        }
+        
+        // Apply armor damage reduction: dmg *= (1 - armor[slot])
+        const armorReduction = target.armor[armorSlot] || 0;
+        return (1 - armorReduction);
+    };
+
+    applyDirectionalBlocking = (target, attacker, dmg) => {
+        // Only apply if target is blocking
+        if (!target.isBlocking) {
+            return dmg;
+        }
+        
+        // Calculate attack angle from attacker to target
+        const hitAngle = Phaser.Math.Angle.Between(attacker.x, attacker.y, target.x, target.y);
+        
+        // Get target's facing direction
+        const targetFacing = target === this.hero ? this.facing : target.facing;
+        
+        // Check if attack is within blocking arc
+        if (this.withinArc(hitAngle, targetFacing, 90)) {
+            // Apply extra 50% reduction for frontal blocks
+            dmg *= 0.5;
+        }
+        
+        return dmg;
+    };
+
+    withinArc = (hitAngle, targetFacing, arcDegrees) => {
+        // Convert target facing direction to angle
+        const targetAngle = this.getAngleFromDirection(targetFacing);
+        
+        // Convert to degrees for easier calculation
+        const hitDegrees = Phaser.Math.RadToDeg(hitAngle);
+        const targetDegrees = Phaser.Math.RadToDeg(targetAngle);
+        
+        // Calculate the difference between angles
+        let angleDiff = Math.abs(hitDegrees - targetDegrees);
+        
+        // Handle angle wrap-around (e.g., 350° vs 10°)
+        if (angleDiff > 180) {
+            angleDiff = 360 - angleDiff;
+        }
+        
+        // Check if within the specified arc (±45° for 90° total arc)
+        return angleDiff <= (arcDegrees / 2);
+    };
+
+    getCritModifier = (attacker, target) => {
+        // Basic crit system - can be expanded later
+        const critChance = 0.1; // 10% crit chance
+        if (Math.random() < critChance) {
+            return 1.5; // 50% more damage on crit
+        }
+        return 1.0; // No crit
+    };
+
+    applyDamage = (target, damage) => {
+        if (!target || target.isDead || target.isTakingDamage) return;
+
+        target.health -= damage;
+        target.isTakingDamage = true;
+        
+        if (target === this.hero) {
+            this.updateHealthBar();
+        } else if (target === this.purpleKnight) {
+            this.updateKnightHealthBar();
+        }
+
+        // Death check
+        if (target.health <= 0 && !target.isDead) {
+            this.handleDeath(target);
+        } else {
+            this.time.delayedCall(500, () => { 
+                target.isTakingDamage = false; 
+            });
+        }
+    };
+
+    applyKnockback = (target, attacker) => {
+        // Only apply knockback to non-blocking targets
+        if (target.isBlocking) return;
+        
+        const knockbackDistance = 15;
+        const knockbackAngle = Phaser.Math.Angle.Between(attacker.x, attacker.y, target.x, target.y);
+        const knockbackVelocity = new Phaser.Math.Vector2(
+            Math.cos(knockbackAngle), 
+            Math.sin(knockbackAngle)
+        ).scale(knockbackDistance * 0.5);
+        
+        target.setVelocity(knockbackVelocity.x, knockbackVelocity.y);
+        
+        // Stop knockback after short duration
+        this.time.delayedCall(150, () => {
+            if (target.active && !target.isDead) {
+                target.setVelocity(0, 0);
+            }
+        });
+    };
+
+    playHitReaction = (target) => {
+        // Visual feedback
+        target.setTint(0xff0000);
+        
+        // Play damage animation
+        const attacker = target === this.hero ? this.purpleKnight : this.hero;
+        let angle = Phaser.Math.Angle.Between(attacker.x, attacker.y, target.x, target.y);
+        if (target === this.purpleKnight) {
+            angle = Phaser.Math.Angle.Wrap(angle + Math.PI);
+        }
+        const direction = this.getDirectionFromAngle(angle);
+        target.anims.play(`take-damage-${direction}`, true);
+        
+        // Reset tint after duration
+        this.time.delayedCall(200, () => {
+            if (target === this.purpleKnight) {
+                target.setTint(0x9400D3);
+            } else {
+                target.clearTint();
+            }
+        });
     };
 
     dealDamage = (body, damage) => {
@@ -778,9 +1228,12 @@ class PlayScene extends Phaser.Scene {
         // --- Hero Input & Movement ---
         const { left, right, up, down, space, m, r, k, n, s, b, f } = this.keys;
 
+        // Early return if in recovery period
+        if (this.hero.isRecovering) return;
+        
         const currentAnim = this.hero.anims.currentAnim;
         const isBlocking = currentAnim && (currentAnim.key.startsWith('shield-block-start-') || currentAnim.key.startsWith('shield-block-mid-'));
-        const isActionInProgress = currentAnim && (currentAnim.key.startsWith('melee-') || currentAnim.key.startsWith('rolling-') || currentAnim.key.startsWith('kick-') || currentAnim.key.startsWith('melee2-') || currentAnim.key.startsWith('special1-') || currentAnim.key.startsWith('front-flip-')) && this.hero.anims.isPlaying;
+        const isActionInProgress = this.hero.isAttacking || (currentAnim && (currentAnim.key.startsWith('melee-') || currentAnim.key.startsWith('rolling-') || currentAnim.key.startsWith('kick-') || currentAnim.key.startsWith('melee2-') || currentAnim.key.startsWith('special1-') || currentAnim.key.startsWith('front-flip-')) && this.hero.anims.isPlaying);
 
         if (isBlocking) {
             this.hero.setVelocity(0, 0);
@@ -824,7 +1277,7 @@ class PlayScene extends Phaser.Scene {
         }
         
         if (Phaser.Input.Keyboard.JustDown(m)) {
-            this.hero.anims.play(`melee-${this.facing}`, true);
+            this.performAttack(this.hero, 'melee');
             return;
         }
 
@@ -834,17 +1287,17 @@ class PlayScene extends Phaser.Scene {
         }
 
         if (Phaser.Input.Keyboard.JustDown(k)) {
-            this.hero.anims.play(`kick-${this.facing}`, true);
+            this.performAttack(this.hero, 'kick');
             return;
         }
 
         if (Phaser.Input.Keyboard.JustDown(n)) {
-            this.hero.anims.play(`melee2-${this.facing}`, true);
+            this.performAttack(this.hero, 'melee2');
             return;
         }
 
         if (Phaser.Input.Keyboard.JustDown(s)) {
-            this.hero.anims.play(`special1-${this.facing}`, true);
+            this.performAttack(this.hero, 'special1');
             return;
         }
 
