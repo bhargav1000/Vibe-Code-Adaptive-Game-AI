@@ -4,11 +4,69 @@
     <meta charset="UTF-8">
     <title>Phaser Game</title>
     <style>
-        body { margin: 0; background: #000; }
+        body { margin: 0; background: #000; display: flex; }
+        #game-container { flex: 1; }
+        #debug-panel { 
+            width: 300px; 
+            background: #111; 
+            color: #0f0; 
+            font-family: 'Courier New', monospace; 
+            font-size: 12px;
+            padding: 10px;
+            border-left: 1px solid #333;
+            overflow-y: auto;
+            max-height: 100vh;
+        }
+        #debug-panel h3 { color: #ff0; margin: 10px 0 5px 0; }
+        #debug-panel .metric { margin: 5px 0; }
+        .q-bar-container { 
+            width: 200px; 
+            height: 15px; 
+            background: #333; 
+            border: 1px solid #666; 
+            margin: 2px 0; 
+        }
+        .q-bar { 
+            height: 100%; 
+            background: #0f0; 
+            width: 10px; 
+            transition: width 0.3s ease; 
+        }
     </style>
     <script src="/node_modules/phaser/dist/phaser.js"></script>
 </head>
 <body>
-    <script src="main.js"></script>
+    <div id="game-container"></div>
+    <div id="debug-panel">
+        <h3>Q-Learning Debug</h3>
+        <div class="metric">State: <span id="debug-state">-</span></div>
+        <div class="metric">Action: <span id="debug-action">-</span></div>
+        <div class="metric">Cooldown: <span id="debug-cooldown">-</span></div>
+        <h3>Q-Values</h3>
+        <div class="metric">Attack: <span id="debug-q-attack">0</span>
+            <div class="q-bar-container">
+                <div class="q-bar" id="q-bar-attack"></div>
+            </div>
+        </div>
+        <div class="metric">Approach: <span id="debug-q-approach">0</span>
+            <div class="q-bar-container">
+                <div class="q-bar" id="q-bar-approach"></div>
+            </div>
+        </div>
+        <div class="metric">Lunge Left: <span id="debug-q-lunge-left">0</span>
+            <div class="q-bar-container">
+                <div class="q-bar" id="q-bar-lunge-left"></div>
+            </div>
+        </div>
+        <div class="metric">Lunge Right: <span id="debug-q-lunge-right">0</span>
+            <div class="q-bar-container">
+                <div class="q-bar" id="q-bar-lunge-right"></div>
+            </div>
+        </div>
+        <h3>Learning Stats</h3>
+        <div class="metric">Total States: <span id="debug-total-states">0</span></div>
+        <div class="metric">Hit Rate: <span id="debug-hit-rate">0%</span></div>
+    </div>
+    <script type="module" src="main.js"></script>
 </body>
 </html> 
