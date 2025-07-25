@@ -189,6 +189,7 @@ class PlayScene extends Phaser.Scene {
         this.hero.isAttacking = false;
         this.hero.currentAttackType = null;
         this.hero.isRecovering = false;
+        this.hero.isBlocking = false;
         
         // Initialize stamina system
         this.hero.maxStamina = 100;
@@ -220,6 +221,7 @@ class PlayScene extends Phaser.Scene {
                 if (this.keys.b.isDown) {
                     this.hero.anims.play(`shield-block-mid-${this.facing}`, true);
                 } else {
+                    this.hero.isBlocking = false;
                     this.hero.anims.play(`idle-${this.facing}`, true);
                 }
                 return;
@@ -743,6 +745,7 @@ class PlayScene extends Phaser.Scene {
 
         const barInnerWidth = this.knightHealthBarBg.displayWidth - leftPadding - rightPadding;
         const healthWidth = healthPercentage * barInnerWidth;
+        console.log(`Knight health bar update: ${this.purpleKnight.health}/${this.purpleKnight.maxHealth} = ${healthWidth}px wide`);
 
         this.knightHealthBar.fillRect(barTopLeftX + leftPadding, barTopLeftY + yOffset, Math.max(0, healthWidth), barHeight);
     }
@@ -751,15 +754,16 @@ class PlayScene extends Phaser.Scene {
         const x = 20;
         const y = 20;
         const w = 200;
-        const h = 20;
+        const h = 30; // Make thicker for visibility
 
         this.healthBarBg.clear();
-        this.healthBarBg.fillStyle(0xff0000);
+        this.healthBarBg.fillStyle(0xff0000); // Red background
         this.healthBarBg.fillRect(x, y, w, h);
 
         this.healthBar.clear();
-        this.healthBar.fillStyle(0x00ff00);
+        this.healthBar.fillStyle(0x00ff00); // Green foreground
         const healthWidth = (this.hero.health / this.hero.maxHealth) * w;
+        console.log(`🩺 Hero health bar update: ${this.hero.health}/${this.hero.maxHealth} = ${healthWidth}px wide`);
         this.healthBar.fillRect(x, y, healthWidth, h);
     }
 
@@ -1112,8 +1116,8 @@ class PlayScene extends Phaser.Scene {
         // Determine armor slot based on blocking status and hit zone
         let armorSlot = 'breastplate'; // default to torso
         
-        if (target.isBlocking) {
-            // When blocking, use shield armor
+        if (target.isBlocking && !target.blockDisabled) {
+            // When blocking and not disabled, use shield armor
             armorSlot = 'shieldFront';
         } else if (hitX !== undefined && hitY !== undefined) {
             // Calculate hit zone based on distance from target center
@@ -1718,6 +1722,7 @@ class PlayScene extends Phaser.Scene {
         if (isBlocking) {
             this.hero.setVelocity(0, 0);
             if (b.isUp && !gamepadInput.block) {
+                this.hero.isBlocking = false;
                 this.hero.anims.play(`idle-${this.facing}`, true);
             }
             return;
@@ -1773,6 +1778,7 @@ class PlayScene extends Phaser.Scene {
                 return;
             }
             this.hero.setVelocity(0, 0);
+            this.hero.isBlocking = true;
             this.hero.anims.play(`shield-block-start-${this.facing}`, true);
             this.logEvt(this.hero, 'block');
             return;
@@ -1934,6 +1940,7 @@ class PlayScene extends Phaser.Scene {
             console.log('💀 HERO EXHAUSTED! Shield broken + movement stunned');
             // Force stop blocking animation if currently blocking
             if (this.hero.anims.currentAnim && this.hero.anims.currentAnim.key.includes('shield-block')) {
+                this.hero.isBlocking = false;
                 this.hero.anims.play(`idle-${this.facing}`, true);
             }
         }
