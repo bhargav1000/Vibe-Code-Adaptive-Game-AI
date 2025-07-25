@@ -188,6 +188,7 @@ class PlayScene extends Phaser.Scene {
         // Initialize attack state
         this.hero.isAttacking = false;
         this.hero.currentAttackType = null;
+        this.hero.isTakingDamage = false;
         this.hero.isRecovering = false;
         this.hero.isBlocking = false;
         
@@ -258,6 +259,7 @@ class PlayScene extends Phaser.Scene {
         this.purpleKnight.isAttacking = false;
         this.purpleKnight.currentAttackType = null;
         this.purpleKnight.isRecovering = false;
+        this.purpleKnight.isTakingDamage = false;
         this.purpleKnight.hitLanded = false;
         this.purpleKnight.actionCooldown = 0;
         this.purpleKnight.currentMovement = null;
@@ -413,9 +415,9 @@ class PlayScene extends Phaser.Scene {
             // --- Purple Knight Health Bar ---
             const barX = this.game.config.width / 2;
             const barY = this.game.config.height - 30; // Nudge it up a bit for the smaller size
-            this.knightHealthBarBg = this.add.image(barX, barY, 'healthbar').setOrigin(0.5).setScale(0.1).setScrollFactor(0).setDepth(102);
+            this.knightHealthBarBg = this.add.image(barX, barY, 'healthbar').setOrigin(0.5).setScale(0.1).setScrollFactor(0).setDepth(101);
             this.knightHealthBarBg.setCrop(0, 0, this.knightHealthBarBg.width - 38, this.knightHealthBarBg.height);
-            this.knightHealthBar = this.add.graphics().setScrollFactor(0).setDepth(101);
+            this.knightHealthBar = this.add.graphics().setScrollFactor(0).setDepth(102);
             this.knightNameText = this.add.text(barX, barY - (this.knightHealthBarBg.displayHeight / 2) + 30, 'Your Purple Knight', {
                 fontSize: '10px',
                 fill: '#fff',
@@ -626,11 +628,13 @@ class PlayScene extends Phaser.Scene {
     
         const attackType = hero.anims.currentAnim.key.split('-')[0];
         this.takeDamage(knight, hero, attackType);
-        this.time.delayedCall(500, () => { knight.isTakingDamage = false; });
     }
 
     takeDamage(victim, attacker, attackType) {
-        if (victim.isDead) return;
+        if (victim.isDead || victim.isTakingDamage) {
+            console.log(`⚠️ Damage blocked for ${victim === this.hero ? 'hero' : 'knight'}: isDead=${victim.isDead}, isTakingDamage=${victim.isTakingDamage}`);
+            return;
+        }
 
         let damage = 10; // Default melee damage
         if (attackType === 'kick') {
@@ -638,6 +642,9 @@ class PlayScene extends Phaser.Scene {
         }
 
         victim.health -= damage;
+        victim.isTakingDamage = true;
+        console.log(`💥 takeDamage: ${damage} damage applied to ${victim === this.hero ? 'hero' : 'knight'}, health: ${victim.health}/${victim.maxHealth}`);
+        
         if (victim === this.hero) {
             this.updateHealthBar();
         } else if (victim === this.purpleKnight) {
@@ -715,6 +722,11 @@ class PlayScene extends Phaser.Scene {
                 this.matter.world.remove(victim.body);  
                 victim.body = null;
             });
+        } else {
+            // Reset isTakingDamage flag after damage animation
+            this.time.delayedCall(500, () => { 
+                victim.isTakingDamage = false; 
+            });
         }
     }
 
@@ -732,6 +744,7 @@ class PlayScene extends Phaser.Scene {
     updateKnightHealthBar() {
         this.knightHealthBar.clear();
         this.knightHealthBar.fillStyle(0xff0000);
+        console.log(`🏰 updateKnightHealthBar called`);
 
         const healthPercentage = this.purpleKnight.health / this.purpleKnight.maxHealth;
         const barTopLeftX = this.knightHealthBarBg.getTopLeft().x;
@@ -762,6 +775,7 @@ class PlayScene extends Phaser.Scene {
 
         this.healthBar.clear();
         this.healthBar.fillStyle(0x00ff00); // Green foreground
+        console.log(`⚔️ updateHealthBar called`);
         const healthWidth = (this.hero.health / this.hero.maxHealth) * w;
         console.log(`🩺 Hero health bar update: ${this.hero.health}/${this.hero.maxHealth} = ${healthWidth}px wide`);
         this.healthBar.fillRect(x, y, healthWidth, h);
@@ -1212,7 +1226,10 @@ class PlayScene extends Phaser.Scene {
     };
 
     applyDamage = (target, damage) => {
-        if (!target || target.isDead || target.isTakingDamage) return;
+        if (!target || target.isDead || target.isTakingDamage) {
+            console.log(`⚠️ applyDamage blocked for ${target === this.hero ? 'hero' : 'knight'}: isDead=${target?.isDead}, isTakingDamage=${target?.isTakingDamage}`);
+            return;
+        }
 
         console.log(`Damage applied: ${damage.toFixed(2)} to ${target === this.hero ? 'hero' : 'knight'}, health: ${target.health.toFixed(1)} -> ${(target.health - damage).toFixed(1)}`);
         target.health -= damage;
@@ -1279,7 +1296,10 @@ class PlayScene extends Phaser.Scene {
 
     dealDamage = (body, damage) => {
         const gameObject = body.gameObject;
-        if (!gameObject || gameObject.isDead || gameObject.isTakingDamage) return;
+        if (!gameObject || gameObject.isDead || gameObject.isTakingDamage) {
+            console.log(`⚠️ dealDamage blocked for ${gameObject === this.hero ? 'hero' : 'knight'}: isDead=${gameObject?.isDead}, isTakingDamage=${gameObject?.isTakingDamage}`);
+            return;
+        }
 
         gameObject.health -= damage;
         gameObject.isTakingDamage = true;
