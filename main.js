@@ -48,6 +48,7 @@ class PlayScene extends Phaser.Scene {
         this.keys.d = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
         this.keys.b = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
         this.keys.f = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+        this.keys.c = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
         this.walkSpeed = 200;
         this.runSpeed = 350;
         this.rollSpeed = 400;
@@ -176,15 +177,27 @@ class PlayScene extends Phaser.Scene {
         this.hero.body.slop = 0.5;   // tighter separation test
         this.hero.body.inertia = Infinity; // prevent any rotation
         this.hero.label = 'hero';
-        // Hero collides with everything normally
+        // Hero collides with everything normally but can't be pushed by knight
         this.hero.body.collisionFilter.category = 0x0001;
         this.hero.body.collisionFilter.mask = 0x0006; // Collide with walls and knight
+        // Make hero heavy to resist being pushed by knight
+        this.hero.setMass(10000);
+        this.hero.body.frictionStatic = 0.99;
         this.hero.takeDamage = this.takeDamage.bind(this);
 
         // Initialize attack state
         this.hero.isAttacking = false;
         this.hero.currentAttackType = null;
         this.hero.isRecovering = false;
+        
+        // Initialize stamina system
+        this.hero.maxStamina = 100;
+        this.hero.stamina = this.hero.maxStamina;
+        this.hero.staminaRegenRate = 1; // stamina per frame when not using
+        this.hero.blockDisabled = false;
+        this.hero.blockDisableTimer = 0;
+        this.hero.movementDisabled = false;
+        this.hero.movementDisableTimer = 0;
         
         // Initialize armor attributes
         this.hero.armor = { 
@@ -247,6 +260,15 @@ class PlayScene extends Phaser.Scene {
         this.purpleKnight.actionCooldown = 0;
         this.purpleKnight.currentMovement = null;
         this.purpleKnight.movementDuration = 0;
+        
+        // Initialize stamina for knight
+        this.purpleKnight.maxStamina = 100;
+        this.purpleKnight.stamina = this.purpleKnight.maxStamina;
+        this.purpleKnight.staminaRegenRate = 1;
+        this.purpleKnight.blockDisabled = false;
+        this.purpleKnight.blockDisableTimer = 0;
+        this.purpleKnight.movementDisabled = false;
+        this.purpleKnight.movementDisableTimer = 0;
         this.purpleKnight.movementAngle = 0;
         this.purpleKnight.movementDirection = 's';
         
@@ -419,6 +441,11 @@ class PlayScene extends Phaser.Scene {
             this.healthBarBg = this.add.graphics().setScrollFactor(0).setDepth(101);
             this.healthBar = this.add.graphics().setScrollFactor(0).setDepth(102);
             this.updateHealthBar(); // Initial draw
+            
+            // Stamina bar
+            this.staminaBarBg = this.add.graphics().setScrollFactor(0).setDepth(101);
+            this.staminaBar = this.add.graphics().setScrollFactor(0).setDepth(102);
+            this.updateStaminaBar(); // Initial draw
         }
 
         // --- Event Logging & WebSocket Bridge ---
@@ -432,14 +459,20 @@ class PlayScene extends Phaser.Scene {
             // Hero's facing direction is on the scene, knight's is on the object itself
             const directionStr = (actor === this.hero) ? this.facing : actor.facing;
 
-            this.eventBuf.push({
+            const event = {
                 t: this.time.now,
                 actor: actor.name,
                 pos: [actor.x, actor.y],
                 dir: this.directionMap.get(directionStr),
                 hp: actor.health / actor.maxHealth,
                 action
-            });
+            };
+            
+            this.eventBuf.push(event);
+            
+            // Display event in bottom panel
+            this.displayEvent(event);
+            
             if (this.eventBuf.length > 60) {
                 this.eventBuf.shift();
             }
@@ -466,11 +499,79 @@ class PlayScene extends Phaser.Scene {
         // this.matter.world.createDebugGraphic();
         // this.matter.world.drawDebug = true;
         // this.matter.world.debugGraphic.setVisible(true);
+        
+        // --- Xbox Controller Setup (Native Browser API) ---
+        this.gamepad = null;
+        this.lastGamepadState = {};
+        console.log('=== GAMEPAD DEBUG START ===');
+        console.log('Browser gamepad support:', !!navigator.getGamepads);
+        console.log('Phaser gamepad available:', !!this.input.gamepad);
+        
+        // Use native browser gamepad API since Phaser's isn't available
+        if (navigator.getGamepads) {
+            console.log('Using native browser gamepad API...');
+            
+            // Add event listeners for gamepad connect/disconnect
+            window.addEventListener('gamepadconnected', (e) => {
+                console.log(`🎮 Gamepad connected: ${e.gamepad.id}`);
+                if (!this.gamepad) {
+                    this.gamepad = e.gamepad;
+                    this.logEvt(this.hero, 'controller_connected_event');
+                }
+            });
+            
+            window.addEventListener('gamepaddisconnected', (e) => {
+                console.log(`🎮 Gamepad disconnected: ${e.gamepad.id}`);
+                if (this.gamepad && this.gamepad.index === e.gamepad.index) {
+                    this.gamepad = null;
+                }
+            });
+            
+            // Check for gamepads every second with detailed logging
+            const checkForNativeGamepads = () => {
+                console.log(`=== Native Gamepad Check #${this.gamepadCheckAttempts + 1} ===`);
+                const gamepads = navigator.getGamepads();
+                console.log(`navigator.getGamepads() returned:`, gamepads);
+                console.log(`Array length: ${gamepads.length}`);
+                
+                for (let i = 0; i < gamepads.length; i++) {
+                    console.log(`Gamepad ${i}:`, gamepads[i]);
+                    if (gamepads[i]) {
+                        console.log(`  - ID: ${gamepads[i].id}`);
+                        console.log(`  - Connected: ${gamepads[i].connected}`);
+                        console.log(`  - Index: ${gamepads[i].index}`);
+                        console.log(`  - Buttons: ${gamepads[i].buttons.length}`);
+                        console.log(`  - Axes: ${gamepads[i].axes.length}`);
+                        
+                        if (gamepads[i].connected && !this.gamepad) {
+                            this.gamepad = gamepads[i];
+                            console.log(`✅ Xbox controller FOUND! ID: ${this.gamepad.id}`);
+                            this.logEvt(this.hero, 'native_controller_detected');
+                            return;
+                        }
+                    }
+                }
+                
+                // Keep checking for controllers
+                if (!this.gamepad && this.gamepadCheckAttempts < 10) {
+                    this.gamepadCheckAttempts++;
+                    this.time.delayedCall(1000, checkForNativeGamepads);
+                } else if (this.gamepadCheckAttempts >= 10) {
+                    console.log('❌ Native gamepad detection stopped after 10 attempts');
+                    console.log('💡 Try pressing any button on your Xbox controller to wake it up!');
+                }
+            };
+            
+            this.gamepadCheckAttempts = 0;
+            this.time.delayedCall(500, checkForNativeGamepads);
+        } else {
+            console.log('❌ No gamepad support available');
+        }
     }
 
     knightReact() {
         const knight = this.purpleKnight;
-        if (knight.isDead || knight.isTakingDamage || knight.isBlocking) return;
+        if (knight.isDead || knight.isTakingDamage || knight.isBlocking || knight.blockDisabled) return;
     
         const distance = Phaser.Math.Distance.Between(this.hero.x, this.hero.y, knight.x, knight.y);
     
@@ -662,6 +763,22 @@ class PlayScene extends Phaser.Scene {
         this.healthBar.fillRect(x, y, healthWidth, h);
     }
 
+    updateStaminaBar() {
+        const x = 20;
+        const y = 50; // Below health bar
+        const w = 200;
+        const h = 15;
+
+        this.staminaBarBg.clear();
+        this.staminaBarBg.fillStyle(0x444444);
+        this.staminaBarBg.fillRect(x, y, w, h);
+
+        this.staminaBar.clear();
+        this.staminaBar.fillStyle(0x0088ff); // Blue for stamina
+        const staminaWidth = (this.hero.stamina / this.hero.maxStamina) * w;
+        this.staminaBar.fillRect(x, y, staminaWidth, h);
+    }
+
     getAngleFromDirection(direction) {
         const angles = {
             'e': 0, 'se': 45, 's': 90, 'sw': 135,
@@ -705,6 +822,22 @@ class PlayScene extends Phaser.Scene {
         // Prevent attacks during recovery or existing attack
         if (attacker.isAttacking || attacker.isRecovering) return;
         
+        // Check stamina cost
+        let staminaCost = 10; // Default
+        if (attackType === 'melee') staminaCost = 15;
+        else if (attackType === 'melee2') staminaCost = 25;
+        else if (attackType === 'special1') staminaCost = 40;
+        else if (attackType === 'kick') staminaCost = 20;
+        
+        // Check if enough stamina
+        if (attacker.stamina < staminaCost) {
+            console.log(`Not enough stamina for ${attackType}: ${attacker.stamina}/${staminaCost}`);
+            return;
+        }
+        
+        // Consume stamina
+        attacker.stamina -= staminaCost;
+        
         attacker.isAttacking = true;
         attacker.currentAttackType = attackType;
         
@@ -714,6 +847,9 @@ class PlayScene extends Phaser.Scene {
         // Play attack animation and immediately pause on frame 0 for wind-up
         attacker.anims.play(`${attackType}-${direction}`, true);
         attacker.anims.pause(); // Freeze on first frame
+        
+        // Log the attack event
+        this.logEvt(attacker, `attack_${attackType}`);
         
         // Delay before blade glow flash (50ms before impact)
         this.time.delayedCall(50, () => this.triggerBladeGlow(attacker), [], this);
@@ -901,7 +1037,18 @@ class PlayScene extends Phaser.Scene {
         // Determine if target is valid for damage
         const attacker = sensor.owner;
         let isValidTarget = false;
-        const baseDamage = 10;
+        
+        // Get damage based on attack type
+        let baseDamage = 10; // Default
+        if (attacker.currentAttackType === 'melee') {
+            baseDamage = 5;
+        } else if (attacker.currentAttackType === 'melee2') {
+            baseDamage = 10;
+        } else if (attacker.currentAttackType === 'special1') {
+            baseDamage = 20;
+        } else if (attacker.currentAttackType === 'kick') {
+            baseDamage = 8; // Keep kick damage moderate
+        }
         
         if (attacker === this.hero && target.label === 'knight') {
             isValidTarget = true;
@@ -1000,8 +1147,8 @@ class PlayScene extends Phaser.Scene {
     };
 
     applyDirectionalBlocking = (target, attacker, dmg) => {
-        // Only apply if target is blocking
-        if (!target.isBlocking) {
+        // Only apply if target is blocking and blocking is not disabled
+        if (!target.isBlocking || target.blockDisabled) {
             return dmg;
         }
         
@@ -1013,8 +1160,19 @@ class PlayScene extends Phaser.Scene {
         
         // Check if attack is within blocking arc
         if (this.withinArc(hitAngle, targetFacing, 90)) {
+            // Store original damage for stamina calculation
+            const originalDamage = dmg;
+            
             // Apply extra 50% reduction for frontal blocks
             dmg *= 0.5;
+            
+            // If target is the knight, reduce stamina based on blocked damage
+            if (target === this.purpleKnight) {
+                const staminaCost = Math.max(0, originalDamage - 5); // damage - 5, minimum 0
+                target.stamina -= staminaCost;
+                target.stamina = Math.max(0, target.stamina); // Don't go below 0
+                console.log(`Knight blocked attack: ${originalDamage} damage -> ${staminaCost} stamina cost. Stamina: ${target.stamina}/${target.maxStamina}`);
+            }
         }
         
         return dmg;
@@ -1055,6 +1213,9 @@ class PlayScene extends Phaser.Scene {
         console.log(`Damage applied: ${damage.toFixed(2)} to ${target === this.hero ? 'hero' : 'knight'}, health: ${target.health.toFixed(1)} -> ${(target.health - damage).toFixed(1)}`);
         target.health -= damage;
         target.isTakingDamage = true;
+        
+        // Log damage event
+        this.logEvt(target, `took_damage_${damage.toFixed(1)}`);
         
         if (target === this.hero) {
             this.updateHealthBar();
@@ -1204,19 +1365,42 @@ class PlayScene extends Phaser.Scene {
         switch(ctx.action) {
             case 'attack':
                 if (distanceToPlayer < 100) { // Only attack if close enough
-                    this.performAttack(knight, 'melee');
-                    return 'SUCCESS';
+                    // Check if knight has enough stamina for attack
+                    if (knight.stamina >= 15) {
+                        this.performAttack(knight, 'melee');
+                        return 'SUCCESS';
+                    } else {
+                        console.log(`Knight out of stamina for attack: ${knight.stamina}/15`);
+                        return 'FAILURE';
+                    }
                 }
                 return 'FAILURE';
                 
             case 'approach':
-                if (distanceToPlayer > 60) {
-                    console.log(`Starting approach movement: distance=${distanceToPlayer.toFixed(1)}, angle=${angle.toFixed(2)}, direction=${direction}`);
-                    knight.currentMovement = 'approach';
-                    knight.movementDuration = 500; // Move for 500ms
-                    knight.movementAngle = angle; // Store direction to player
-                    knight.movementDirection = direction;
-                    return 'SUCCESS';
+                if (distanceToPlayer > 60 && !knight.movementDisabled) {
+                    // Check stamina for approach (minimal cost)
+                    if (knight.stamina >= 5) {
+                        // Check if movement would cause collision with player
+                        const moveDistance = 2 * 8; // speed * frames (rough estimate)
+                        if (distanceToPlayer > moveDistance + 40) { // 40px buffer to prevent overlap
+                            console.log(`Starting approach movement: distance=${distanceToPlayer.toFixed(1)}, angle=${angle.toFixed(2)}, direction=${direction}`);
+                            knight.stamina -= 5;
+                            knight.currentMovement = 'approach';
+                            knight.movementDuration = 500; // Move for 500ms
+                            knight.movementAngle = angle; // Store direction to player
+                            knight.movementDirection = direction;
+                            return 'SUCCESS';
+                        } else {
+                            console.log(`Approach would cause collision, staying in place`);
+                            return 'FAILURE';
+                        }
+                    } else {
+                        console.log(`Knight out of stamina for approach: ${knight.stamina}/5`);
+                        return 'FAILURE';
+                    }
+                } else if (knight.movementDisabled) {
+                    console.log(`Knight movement disabled - exhausted!`);
+                    return 'FAILURE';
                 } else {
                     console.log(`Too close for approach: distance=${distanceToPlayer.toFixed(1)}, staying idle`);
                     knight.setVelocity(0, 0);
@@ -1225,18 +1409,38 @@ class PlayScene extends Phaser.Scene {
                 }
                 
             case 'lunge_left':
-                knight.currentMovement = 'lunge_left';
-                knight.movementDuration = 300; // Lunge for 300ms
-                knight.movementAngle = angle - Math.PI/2; // Store left angle
-                knight.movementDirection = direction; // Face towards player
-                return 'SUCCESS';
+                // Check stamina and movement disability for lunge (higher cost)
+                if (knight.stamina >= 20 && !knight.movementDisabled) {
+                    knight.stamina -= 20;
+                    knight.currentMovement = 'lunge_left';
+                    knight.movementDuration = 300; // Lunge for 300ms
+                    knight.movementAngle = angle - Math.PI/2; // Store left angle
+                    knight.movementDirection = direction; // Face towards player
+                    return 'SUCCESS';
+                } else if (knight.movementDisabled) {
+                    console.log(`Knight lunge blocked - exhausted!`);
+                    return 'FAILURE';
+                } else {
+                    console.log(`Knight out of stamina for lunge_left: ${knight.stamina}/20`);
+                    return 'FAILURE';
+                }
                 
             case 'lunge_right':
-                knight.currentMovement = 'lunge_right';
-                knight.movementDuration = 300; // Lunge for 300ms
-                knight.movementAngle = angle + Math.PI/2; // Store right angle
-                knight.movementDirection = direction; // Face towards player
-                return 'SUCCESS';
+                // Check stamina and movement disability for lunge (higher cost)
+                if (knight.stamina >= 20 && !knight.movementDisabled) {
+                    knight.stamina -= 20;
+                    knight.currentMovement = 'lunge_right';
+                    knight.movementDuration = 300; // Lunge for 300ms
+                    knight.movementAngle = angle + Math.PI/2; // Store right angle
+                    knight.movementDirection = direction; // Face towards player
+                    return 'SUCCESS';
+                } else if (knight.movementDisabled) {
+                    console.log(`Knight lunge blocked - exhausted!`);
+                    return 'FAILURE';
+                } else {
+                    console.log(`Knight out of stamina for lunge_right: ${knight.stamina}/20`);
+                    return 'FAILURE';
+                }
                 
             default:
                 knight.setVelocity(0, 0);
@@ -1279,14 +1483,25 @@ class PlayScene extends Phaser.Scene {
                 
                 // Use stored movement direction and angle (don't recalculate)
                 if (knight.currentMovement === 'approach') {
-                    const knightSpeed = 2;
-                    const moveVector = new Phaser.Math.Vector2(
-                        Math.cos(knight.movementAngle) * knightSpeed,
-                        Math.sin(knight.movementAngle) * knightSpeed
-                    );
-                    knight.setStatic(false); // Allow movement temporarily
-                    knight.setVelocity(moveVector.x, moveVector.y);
-                    knight.anims.play(`walk-${knight.movementDirection}`, true);
+                    // Check distance to player to prevent overshooting
+                    const currentDistance = Phaser.Math.Distance.Between(knight.x, knight.y, this.hero.x, this.hero.y);
+                    
+                    if (currentDistance > 70) { // Safe distance to continue moving
+                        const knightSpeed = Math.min(2, (currentDistance - 60) / 10); // Slow down as getting closer
+                        const moveVector = new Phaser.Math.Vector2(
+                            Math.cos(knight.movementAngle) * knightSpeed,
+                            Math.sin(knight.movementAngle) * knightSpeed
+                        );
+                        knight.setStatic(false); // Allow movement temporarily
+                        // Disable collision with hero during movement to prevent pushing
+                        knight.body.collisionFilter.mask = 0x0004; // Only collide with walls, not hero
+                        knight.setVelocity(moveVector.x, moveVector.y);
+                        knight.anims.play(`walk-${knight.movementDirection}`, true);
+                    } else {
+                        // Stop early if too close
+                        console.log(`Stopping approach early - too close: ${currentDistance.toFixed(1)}`);
+                        knight.movementDuration = 0; // Force stop
+                    }
                 } else if (knight.currentMovement === 'lunge_left') {
                     const lungeSpeed = 4;
                     const leftVector = new Phaser.Math.Vector2(
@@ -1294,6 +1509,8 @@ class PlayScene extends Phaser.Scene {
                         Math.sin(knight.movementAngle) * lungeSpeed
                     );
                     knight.setStatic(false); // Allow movement temporarily
+                    // Disable collision with hero during movement to prevent pushing
+                    knight.body.collisionFilter.mask = 0x0004; // Only collide with walls, not hero
                     knight.setVelocity(leftVector.x, leftVector.y);
                     // Only start rolling animation if not already playing
                     if (!knight.anims.isPlaying || !knight.anims.currentAnim.key.startsWith('rolling-')) {
@@ -1306,6 +1523,8 @@ class PlayScene extends Phaser.Scene {
                         Math.sin(knight.movementAngle) * lungeSpeed
                     );
                     knight.setStatic(false); // Allow movement temporarily
+                    // Disable collision with hero during movement to prevent pushing
+                    knight.body.collisionFilter.mask = 0x0004; // Only collide with walls, not hero
                     knight.setVelocity(rightVector.x, rightVector.y);
                     // Only start rolling animation if not already playing
                     if (!knight.anims.isPlaying || !knight.anims.currentAnim.key.startsWith('rolling-')) {
@@ -1320,6 +1539,8 @@ class PlayScene extends Phaser.Scene {
                     // Stop movement and return to static state
                     knight.setVelocity(0, 0);
                     knight.setStatic(true); // Return to immovable static state
+                    // Restore collision with hero and walls
+                    knight.body.collisionFilter.mask = 0x0005; // Collide with hero and walls again
                     // Update facing direction when movement ends
                     const currentAngle = Phaser.Math.Angle.Between(knight.x, knight.y, this.hero.x, this.hero.y);
                     const currentDirection = this.getDirectionFromAngle(currentAngle);
@@ -1355,6 +1576,9 @@ class PlayScene extends Phaser.Scene {
                 // Execute the chosen action
                 console.log(`Executing action: ${prevAction} in state: ${JSON.stringify(prevState)}`);
                 const actionResult = this.executeKnightAction(knight, ctx);
+                
+                // Log AI action
+                this.logEvt(knight, prevAction);
                 
                 // Update Q-values after action execution
                 if (actionResult === 'SUCCESS') {
@@ -1423,10 +1647,69 @@ class PlayScene extends Phaser.Scene {
         }
 
         // --- Hero Input & Movement ---
-        const { left, right, up, down, space, m, r, k, n, s, b, f } = this.keys;
+        const { left, right, up, down, space, m, r, k, n, s, b, f, c } = this.keys;
+        
+        // Xbox controller input
+        let gamepadInput = {
+            left: false, right: false, up: false, down: false,
+            space: false, attack: false, melee2: false, special1: false, 
+            block: false, frontFlip: false
+        };
+        
+        // Try to detect gamepad during gameplay using native API
+        if (!this.gamepad && navigator.getGamepads) {
+            const gamepads = navigator.getGamepads();
+            for (let i = 0; i < gamepads.length; i++) {
+                if (gamepads[i] && gamepads[i].connected) {
+                    this.gamepad = gamepads[i];
+                    console.log(`Xbox controller detected during gameplay! ID: ${this.gamepad.id}`);
+                    this.logEvt(this.hero, 'controller_detected_runtime');
+                    break;
+                }
+            }
+        }
+        
+        // Use native gamepad API for input
+        if (this.gamepad && this.gamepad.connected) {
+            // Get fresh gamepad state (required for native API)
+            const freshGamepads = navigator.getGamepads();
+            const pad = freshGamepads[this.gamepad.index];
+            
+            if (pad) {
+                // Left stick for movement (axes 0 and 1)
+                const leftStickX = pad.axes[0];
+                const leftStickY = pad.axes[1];
+                const deadzone = 0.3;
+                
+                if (leftStickX < -deadzone) gamepadInput.left = true;
+                if (leftStickX > deadzone) gamepadInput.right = true;
+                if (leftStickY < -deadzone) gamepadInput.up = true;
+                if (leftStickY > deadzone) gamepadInput.down = true;
+                
+                // Button mappings (Xbox controller - new layout)
+                gamepadInput.frontFlip = pad.buttons[0].pressed; // A button - dodge (front flip)
+                gamepadInput.block = pad.buttons[1].pressed; // B button - block
+                gamepadInput.attack = pad.buttons[2].pressed; // X button - melee
+                gamepadInput.melee2 = pad.buttons[3].pressed; // Y button - melee2
+                gamepadInput.special1 = pad.buttons[7].pressed; // RT - special1
+                gamepadInput.space = pad.buttons[4].pressed; // LB (Left Shoulder) - run
+                
+                // Debug: Log button states when any are pressed
+                for (let i = 0; i < pad.buttons.length; i++) {
+                    if (pad.buttons[i].pressed) {
+                        console.log(`Button ${i} pressed - ${this.getButtonName(i)}`);
+                    }
+                }
+            }
+        }
 
-        // Early return if in recovery period
-        if (this.hero.isRecovering) return;
+        // Early return if in recovery period or movement disabled
+        if (this.hero.isRecovering || this.hero.movementDisabled) {
+            if (this.hero.movementDisabled) {
+                this.hero.setVelocity(0, 0); // Ensure no movement during stun
+            }
+            return;
+        }
         
         const currentAnim = this.hero.anims.currentAnim;
         const isBlocking = currentAnim && (currentAnim.key.startsWith('shield-block-start-') || currentAnim.key.startsWith('shield-block-mid-'));
@@ -1434,7 +1717,7 @@ class PlayScene extends Phaser.Scene {
 
         if (isBlocking) {
             this.hero.setVelocity(0, 0);
-            if (b.isUp) {
+            if (b.isUp && !gamepadInput.block) {
                 this.hero.anims.play(`idle-${this.facing}`, true);
             }
             return;
@@ -1462,75 +1745,114 @@ class PlayScene extends Phaser.Scene {
             return;
         }
 
-        if (Phaser.Input.Keyboard.JustDown(f)) {
-            this.hero.anims.play(`front-flip-${this.facing}`, true);
+        // Handle actions (keyboard + gamepad with native API)
+        const currentGamepadState = this.gamepad ? {
+            attack: gamepadInput.attack,
+            melee2: gamepadInput.melee2,
+            special1: gamepadInput.special1,
+            frontFlip: gamepadInput.frontFlip,
+            block: gamepadInput.block
+        } : {};
+
+        if (Phaser.Input.Keyboard.JustDown(f) || (gamepadInput.frontFlip && !this.lastGamepadState?.frontFlip)) {
+            // Check stamina for dodge
+            if (this.hero.stamina >= 30) {
+                this.hero.stamina -= 30;
+                this.hero.anims.play(`front-flip-${this.facing}`, true);
+                this.logEvt(this.hero, 'front_flip');
+            } else {
+                console.log('Not enough stamina for dodge');
+            }
             return;
         }
 
-        if (Phaser.Input.Keyboard.JustDown(b)) {
+        if (Phaser.Input.Keyboard.JustDown(b) || (gamepadInput.block && !this.lastGamepadState?.block)) {
+            // Check if blocking is disabled due to stamina exhaustion
+            if (this.hero.blockDisabled) {
+                console.log('❌ Cannot block - shield broken!');
+                return;
+            }
             this.hero.setVelocity(0, 0);
             this.hero.anims.play(`shield-block-start-${this.facing}`, true);
+            this.logEvt(this.hero, 'block');
             return;
         }
         
-        if (Phaser.Input.Keyboard.JustDown(m)) {
+        if (Phaser.Input.Keyboard.JustDown(m) || (gamepadInput.attack && !this.lastGamepadState?.attack)) {
             this.performAttack(this.hero, 'melee');
             return;
         }
 
-        if (Phaser.Input.Keyboard.JustDown(r)) {
-            this.hero.anims.play(`rolling-${this.facing}`, true);
-            return;
-        }
-
-        if (Phaser.Input.Keyboard.JustDown(k)) {
-            this.performAttack(this.hero, 'kick');
-            return;
-        }
-
-        if (Phaser.Input.Keyboard.JustDown(n)) {
+        if (Phaser.Input.Keyboard.JustDown(n) || (gamepadInput.melee2 && !this.lastGamepadState?.melee2)) {
             this.performAttack(this.hero, 'melee2');
             return;
         }
 
-        if (Phaser.Input.Keyboard.JustDown(s)) {
+        if (Phaser.Input.Keyboard.JustDown(c) || (gamepadInput.special1 && !this.lastGamepadState?.special1)) {
             this.performAttack(this.hero, 'special1');
             return;
         }
+
 
         const velocity = new Phaser.Math.Vector2();
 
         // --- Determine direction from key presses ---
         let direction = this.facing;
-        if (up.isDown) {
-            if (left.isDown) direction = 'nw';
-            else if (right.isDown) direction = 'ne';
+        // Consider both keyboard and gamepad for direction
+        const upPressed = up.isDown || gamepadInput.up;
+        const downPressed = down.isDown || gamepadInput.down;
+        const leftPressed = left.isDown || gamepadInput.left;
+        const rightPressed = right.isDown || gamepadInput.right;
+        
+        if (upPressed) {
+            if (leftPressed) direction = 'nw';
+            else if (rightPressed) direction = 'ne';
             else direction = 'n';
-        } else if (down.isDown) {
-            if (left.isDown) direction = 'sw';
-            else if (right.isDown) direction = 'se';
+        } else if (downPressed) {
+            if (leftPressed) direction = 'sw';
+            else if (rightPressed) direction = 'se';
             else direction = 's';
-        } else if (left.isDown) {
+        } else if (leftPressed) {
             direction = 'w';
-        } else if (right.isDown) {
+        } else if (rightPressed) {
             direction = 'e';
         }
 
-        // --- Set velocity based on keys pressed ---
-        if (left.isDown) velocity.x = -1;
-        else if (right.isDown) velocity.x = 1;
-        if (up.isDown) velocity.y = -1;
-        else if (down.isDown) velocity.y = 1;
+        // --- Set velocity based on keys pressed or gamepad ---
+        if (leftPressed) velocity.x = -1;
+        else if (rightPressed) velocity.x = 1;
+        if (upPressed) velocity.y = -1;
+        else if (downPressed) velocity.y = 1;
 
-        // --- Play animations ---
+        // --- Play animations and log movement ---
         if (velocity.length() > 0) {
             this.facing = direction;
 
-            const currentSpeed = space.isDown ? 5 : 3; // Matter physics scaling
+            const isRunning = space.isDown || gamepadInput.space;
+            const currentSpeed = isRunning ? 5 : 3; // Matter physics scaling
             velocity.normalize().scale(currentSpeed);
-
-            const animPrefix = space.isDown ? 'run' : 'walk';
+            const animPrefix = isRunning ? 'run' : 'walk';
+            
+            // Running stamina cost
+            if (isRunning) {
+                if (this.hero.stamina > 0) {
+                    this.hero.stamina -= 0.5; // Drain stamina while running
+                } else {
+                    // Force walking if no stamina
+                    const currentSpeed = 3;
+                    velocity.normalize().scale(currentSpeed);
+                    const animPrefix = 'walk';
+                    console.log('Out of stamina - forced to walk');
+                }
+            }
+            
             this.hero.anims.play(`${animPrefix}-${this.facing}`, true);
+            
+            // Log movement (throttled to avoid spam)
+            if (!this.lastMoveLog || this.time.now - this.lastMoveLog > 500) {
+                this.logEvt(this.hero, isRunning ? 'running' : 'walking');
+                this.lastMoveLog = this.time.now;
+            }
         } else {
             this.hero.anims.play(`idle-${this.facing}`, true);
         }
@@ -1568,6 +1890,196 @@ class PlayScene extends Phaser.Scene {
             document.getElementById('q-bar-lunge-left').style.width = Math.max(minWidth, Math.min(maxWidth, row.lunge_left * 20 + 10)) + 'px';
             document.getElementById('q-bar-lunge-right').style.width = Math.max(minWidth, Math.min(maxWidth, row.lunge_right * 20 + 10)) + 'px';
         }
+        
+        // Stamina regeneration
+        this.updateStamina();
+        
+        // Store gamepad state for next frame comparison (native API)
+        if (this.gamepad) {
+            this.lastGamepadState = {
+                attack: gamepadInput.attack,
+                melee2: gamepadInput.melee2,
+                special1: gamepadInput.special1,
+                frontFlip: gamepadInput.frontFlip,
+                block: gamepadInput.block
+            };
+        }
+
+        // Update player action debug info (safe version)
+        try {
+            this.updatePlayerDebugInfo();
+        } catch (e) {
+            console.log('Debug info update failed:', e);
+        }
+    }
+
+    getButtonName(index) {
+        const buttonNames = {
+            0: 'A', 1: 'B', 2: 'X', 3: 'Y',
+            4: 'LB', 5: 'RB', 6: 'LT', 7: 'RT',
+            8: 'Back', 9: 'Start', 10: 'LS', 11: 'RS',
+            12: 'DPad Up', 13: 'DPad Down', 14: 'DPad Left', 15: 'DPad Right'
+        };
+        return buttonNames[index] || `Button ${index}`;
+    }
+
+    updateStamina() {
+        // Check for stamina exhaustion and disable blocking + movement
+        if (this.hero.stamina <= 0 && !this.hero.blockDisabled) {
+            this.hero.blockDisabled = true;
+            this.hero.blockDisableTimer = 1000; // 1 second in milliseconds
+            this.hero.movementDisabled = true;
+            this.hero.movementDisableTimer = 300; // 0.3 seconds movement stun
+            this.hero.setVelocity(0, 0); // Stop moving immediately
+            console.log('💀 HERO EXHAUSTED! Shield broken + movement stunned');
+            // Force stop blocking animation if currently blocking
+            if (this.hero.anims.currentAnim && this.hero.anims.currentAnim.key.includes('shield-block')) {
+                this.hero.anims.play(`idle-${this.facing}`, true);
+            }
+        }
+        
+        if (this.purpleKnight.stamina <= 0 && !this.purpleKnight.blockDisabled) {
+            this.purpleKnight.blockDisabled = true;
+            this.purpleKnight.blockDisableTimer = 1000; // 1 second in milliseconds
+            this.purpleKnight.movementDisabled = true;
+            this.purpleKnight.movementDisableTimer = 300; // 0.3 seconds movement stun
+            this.purpleKnight.isBlocking = false; // Force stop blocking
+            this.purpleKnight.setVelocity(0, 0); // Stop moving immediately
+            this.purpleKnight.currentMovement = null; // Cancel any ongoing movement
+            console.log('💀 KNIGHT EXHAUSTED! Shield broken + movement stunned');
+            // Force stop blocking animation
+            const direction = this.getDirectionFromAngle(Phaser.Math.Angle.Between(this.purpleKnight.x, this.purpleKnight.y, this.hero.x, this.hero.y));
+            this.purpleKnight.anims.play(`idle-${direction}`, true);
+        }
+        
+        // Update disable timers
+        if (this.hero.blockDisabled) {
+            this.hero.blockDisableTimer -= 16.67; // Approximate frame time
+            if (this.hero.blockDisableTimer <= 0) {
+                this.hero.blockDisabled = false;
+                console.log('🛡️ Hero shield recovered!');
+            }
+        }
+        
+        if (this.hero.movementDisabled) {
+            this.hero.movementDisableTimer -= 16.67;
+            if (this.hero.movementDisableTimer <= 0) {
+                this.hero.movementDisabled = false;
+                console.log('🏃 Hero can move again!');
+            }
+        }
+        
+        if (this.purpleKnight.blockDisabled) {
+            this.purpleKnight.blockDisableTimer -= 16.67; // Approximate frame time
+            if (this.purpleKnight.blockDisableTimer <= 0) {
+                this.purpleKnight.blockDisabled = false;
+                console.log('🛡️ Knight shield recovered!');
+            }
+        }
+        
+        if (this.purpleKnight.movementDisabled) {
+            this.purpleKnight.movementDisableTimer -= 16.67;
+            if (this.purpleKnight.movementDisableTimer <= 0) {
+                this.purpleKnight.movementDisabled = false;
+                console.log('🏃 Knight can move again!');
+            }
+        }
+        
+        // Regenerate stamina for hero (only if not at 0 or recovering from exhaustion)
+        if (this.hero.stamina < this.hero.maxStamina && this.hero.stamina > 0) {
+            this.hero.stamina += this.hero.staminaRegenRate;
+            this.hero.stamina = Math.min(this.hero.stamina, this.hero.maxStamina);
+            this.updateStaminaBar();
+        } else if (this.hero.stamina <= 0 && !this.hero.blockDisabled) {
+            // Start regenerating after block disable period ends
+            this.hero.stamina = 1; // Jump start regeneration
+            this.updateStaminaBar();
+        }
+        
+        // Regenerate stamina for knight (only if not at 0 or recovering from exhaustion)
+        if (this.purpleKnight.stamina < this.purpleKnight.maxStamina && this.purpleKnight.stamina > 0) {
+            this.purpleKnight.stamina += this.purpleKnight.staminaRegenRate;
+            this.purpleKnight.stamina = Math.min(this.purpleKnight.stamina, this.purpleKnight.maxStamina);
+        } else if (this.purpleKnight.stamina <= 0 && !this.purpleKnight.blockDisabled) {
+            // Start regenerating after block disable period ends
+            this.purpleKnight.stamina = 1; // Jump start regeneration
+        }
+    }
+
+    displayEvent(event) {
+        const eventsContent = document.getElementById('events-content');
+        if (!eventsContent) return;
+        
+        // Create formatted event display
+        const eventDiv = document.createElement('div');
+        eventDiv.className = 'event-item';
+        
+        // Format the JSON prettily
+        const formattedEvent = {
+            time: Math.round(event.t),
+            actor: event.actor,
+            position: `[${Math.round(event.pos[0])}, ${Math.round(event.pos[1])}]`,
+            direction: event.dir,
+            health: `${Math.round(event.hp * 100)}%`,
+            action: event.action
+        };
+        
+        eventDiv.textContent = JSON.stringify(formattedEvent, null, 2);
+        
+        // Add to top of events panel
+        eventsContent.insertBefore(eventDiv, eventsContent.firstChild);
+        
+        // Keep only last 10 events visible
+        while (eventsContent.children.length > 10) {
+            eventsContent.removeChild(eventsContent.lastChild);
+        }
+    }
+
+    updatePlayerDebugInfo() {
+        if (!this.keys) return;
+        
+        const keys = this.input.keyboard.addKeys('W,A,S,D,SPACE,Q,E,R,F,B,C,V');
+        
+        // Determine current action based on actual key states
+        let currentAction = 'idle';
+        if (this.hero && this.hero.isAttacking) {
+            currentAction = `attacking (${this.hero.currentAttackType || 'unknown'})`;
+        } else if (keys.B.isDown) {
+            currentAction = 'blocking';
+        } else if (keys.Q.isDown) {
+            currentAction = 'melee attack';
+        } else if (keys.E.isDown) {
+            currentAction = 'rolling';
+        } else if (keys.R.isDown) {
+            currentAction = 'kick';
+        } else if (keys.F.isDown) {
+            currentAction = 'melee2';
+        } else if (keys.C.isDown) {
+            currentAction = 'special1';
+        } else if (keys.V.isDown) {
+            currentAction = 'front-flip';
+        }
+        
+        // Determine movement based on actual key states
+        let movement = 'stationary';
+        if (keys.W.isDown || keys.A.isDown || keys.S.isDown || keys.D.isDown) {
+            const speed = keys.SPACE.isDown ? 'running' : 'walking';
+            const dirs = [];
+            if (keys.W.isDown) dirs.push('up');
+            if (keys.S.isDown) dirs.push('down');
+            if (keys.A.isDown) dirs.push('left');
+            if (keys.D.isDown) dirs.push('right');
+            movement = `${speed} (${dirs.join('+')})`;
+        }
+        
+        // Safely update debug panel
+        const actionEl = document.getElementById('debug-player-action');
+        const facingEl = document.getElementById('debug-player-facing');
+        const movementEl = document.getElementById('debug-player-movement');
+        
+        if (actionEl) actionEl.textContent = currentAction;
+        if (facingEl) facingEl.textContent = this.facing || '-';
+        if (movementEl) movementEl.textContent = movement;
     }
 }
 
